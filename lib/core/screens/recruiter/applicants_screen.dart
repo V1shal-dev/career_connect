@@ -8,7 +8,6 @@ import 'package:career_connect/providers/application_provider.dart';
 import 'package:career_connect/models/application_model.dart';
 import 'package:career_connect/services/cloudinary_service.dart';
 
-
 class ApplicantsScreen extends StatelessWidget {
   final String jobId;
   final String jobTitle;
@@ -19,111 +18,109 @@ class ApplicantsScreen extends StatelessWidget {
     required this.jobTitle,
   }) : super(key: key);
 
-  String _fixCloudinaryUrl(String url) {
-    // Ensure URL uses /raw/upload for documents
-    if (url.contains('res.cloudinary.com') && !url.contains('/raw/upload')) {
-      url = url.replaceAll('/image/upload', '/raw/upload');
-    }
-
-    // Add fl_attachment to force download/proper viewing
-    if (url.contains('/upload/') && !url.contains('fl_attachment')) {
-      url = url.replaceAll('/upload/', '/upload/fl_attachment/');
-    }
-
-    return url;
+  /// Builds the direct PDF URL for viewing (raw, no fl_attachment).
+  String _previewResumeUrl(String url) {
+    if (url.isEmpty) return url;
+    return CloudinaryService().getPreviewUrl(url.trim());
   }
 
-  Future<void> _launchUrl(BuildContext context, String url) async {
+  /// Google Docs viewer URL so the PDF opens in a browser page (reliable on Android).
+  static String _googleDocsViewerUrl(String pdfUrl) {
+    return 'https://docs.google.com/viewer?url=${Uri.encodeComponent(pdfUrl)}&embedded=true';
+  }
+
+  Future<void> _openResume(BuildContext context, ApplicationModel application) async {
+    if (application.resumeUrl.isEmpty) {
+      Helpers.showSnackBar(context, 'Resume URL not available', isError: true);
+      return;
+    }
+    final directUrl = _previewResumeUrl(application.resumeUrl);
+    if (directUrl.isEmpty) {
+      Helpers.showSnackBar(context, 'Resume URL not available', isError: true);
+      return;
+    }
+
+    if (!context.mounted) return;
+    Helpers.showSnackBar(context, 'Opening resume…');
+
+    // Prefer Google Docs viewer so the PDF displays in the browser (avoids Android direct-PDF issues).
+    final viewerUrl = _googleDocsViewerUrl(directUrl);
+    bool opened = false;
+
     try {
-      if (url.isEmpty) {
-        Helpers.showSnackBar(
-          context,
-          'Resume URL not available',
-          isError: true,
-        );
-        return;
-      }
-
-      // Fix Cloudinary URL format
-      String fixedUrl = _fixCloudinaryUrl(url.trim());
-
-      print('==========================================');
-      print('Original URL: $url');
-      print('Fixed URL: $fixedUrl');
-      print('==========================================');
-
-      final uri = Uri.parse(fixedUrl);
-
-      // Try to launch URL
-      final launched = await launchUrl(
-        uri,
+      opened = await launchUrl(
+        Uri.parse(viewerUrl),
         mode: LaunchMode.externalApplication,
       );
+    } catch (_) {}
 
-      if (!launched && context.mounted) {
-        // Show options dialog as fallback
-        _showResumeOptionsDialog(context, fixedUrl);
-      }
+    if (!opened && context.mounted) {
+      try {
+        opened = await launchUrl(
+          Uri.parse(directUrl),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {}
+    }
 
-    } catch (e) {
-      print('Error launching URL: $e');
-
-      if (context.mounted) {
-        _showResumeOptionsDialog(context, url);
-      }
+    if (!opened && context.mounted) {
+      _showResumeFallbackDialog(context, directUrl);
     }
   }
 
-  void _showResumeOptionsDialog(BuildContext context, String url) {
+  void _showResumeFallbackDialog(BuildContext context, String directUrl) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Open Resume'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Choose an option:'),
-            const SizedBox(height: 8),
-            Text(
-              url,
-              style: const TextStyle(fontSize: 10, color: Colors.grey),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+            const Text(
+              'Could not open automatically. Copy the link and paste it in your browser, or try opening again.',
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              directUrl,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),
         actions: [
           TextButton.icon(
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: url));
-              Navigator.pop(context);
-              Helpers.showSnackBar(
-                context,
-                'Resume URL copied! Paste it in your browser.',
-              );
+              Clipboard.setData(ClipboardData(text: directUrl));
+              Navigator.pop(ctx);
+              if (context.mounted) {
+                Helpers.showSnackBar(context, 'Link copied to clipboard');
+              }
             },
             icon: const Icon(Icons.copy),
-            label: const Text('Copy URL'),
+            label: const Text('Copy link'),
           ),
-          TextButton.icon(
+          FilledButton.icon(
             onPressed: () async {
-              Navigator.pop(context);
+              Navigator.pop(ctx);
+              final viewerUrl = _googleDocsViewerUrl(directUrl);
+              bool opened = false;
               try {
-                final uri = Uri.parse(url);
-                await launchUrl(uri, mode: LaunchMode.platformDefault);
-              } catch (e) {
-                if (context.mounted) {
-                  Helpers.showSnackBar(
-                    context,
-                    'Please copy the URL and open it in a browser',
-                    isError: true,
+                opened = await launchUrl(
+                  Uri.parse(viewerUrl),
+                  mode: LaunchMode.externalApplication,
+                );
+              } catch (_) {}
+              if (!opened) {
+                try {
+                  await launchUrl(
+                    Uri.parse(directUrl),
+                    mode: LaunchMode.externalApplication,
                   );
-                }
+                } catch (_) {}
               }
             },
             icon: const Icon(Icons.open_in_browser),
-            label: const Text('Try Again'),
+            label: const Text('Open in browser'),
           ),
         ],
       ),
@@ -214,7 +211,7 @@ class ApplicantsScreen extends StatelessWidget {
 
               return _ApplicantCard(
                 application: application,
-                onViewResume: () => _launchUrl(context, application.resumeUrl),
+                onViewResume: () => _openResume(context, application),
                 onUpdateStatus: (status) async {
                   final success = await applicationProvider.updateApplicationStatus(
                     application.applicationId,
