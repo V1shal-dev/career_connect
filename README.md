@@ -1,7 +1,7 @@
 # CareerConnect
  
 A modern **Flutter** job-board app that connects **recruiters** and **job seekers**. Recruiters post jobs and manage applicants; job seekers browse jobs and apply with a resume and cover letter. Built with **Firebase** (Auth + Firestore) and **Cloudinary** for resume storage.
-
+ 
 ---
 
 ## Features
